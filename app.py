@@ -6,6 +6,7 @@ from flask import Flask, request
 from twilio.request_validator import RequestValidator
 from twilio.rest import Client
 from twilio.twiml.messaging_response import MessagingResponse
+from werkzeug.middleware.proxy_fix import ProxyFix
 
 import config
 import db
@@ -27,6 +28,7 @@ twilio_client = Client(config.TWILIO_ACCOUNT_SID, config.TWILIO_AUTH_TOKEN)
 validator = RequestValidator(config.TWILIO_AUTH_TOKEN)
 
 app = Flask(__name__)
+app.wsgi_app = ProxyFix(app.wsgi_app, x_proto=1, x_host=1)
 
 
 def procesar_mensaje(telefono: str, nombre: str, texto: str) -> str:

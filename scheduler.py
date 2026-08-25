@@ -41,8 +41,9 @@ def _enviar_recordatorio(twilio_client, asignacion: dict, cuando: str):
             # persona escribió al bot en las últimas 24h (modo pruebas).
             if cuando == "previo":
                 texto = (
-                    f"Recordatorio: tienes asignada la parte '{asignacion['rol']}' "
-                    f"en la {tipo_label} del {fecha_fmt}."
+                    f'Recordatorio: tienes asignada la parte "{asignacion["rol"]}" '
+                    f"en la reunión de {tipo_label} que será el {fecha_fmt}. "
+                    "¡No lo olvides!"
                 )
             else:
                 texto = (

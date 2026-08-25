@@ -34,6 +34,12 @@ WEEKEND_MINUTE = int(os.environ.get("WEEKEND_MINUTE", 0))
 
 REMINDER_DAYS_BEFORE = int(os.environ.get("REMINDER_DAYS_BEFORE", 2))
 
+# Content SID (HXxxxx...) de las plantillas de WhatsApp aprobadas por Meta.
+# Mientras estén vacías, el bot manda texto libre (solo funciona si la
+# persona escribió en las últimas 24h).
+CONTENT_SID_PREVIO = os.environ.get("CONTENT_SID_PREVIO") or None
+CONTENT_SID_DIA = os.environ.get("CONTENT_SID_DIA") or None
+
 TIPO_LABEL = {
     "entre_semana": "Reunión de entre semana (Vida y Ministerio)",
     "fin_de_semana": "Reunión de fin de semana (Público/Atalaya)",

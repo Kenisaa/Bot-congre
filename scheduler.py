@@ -1,3 +1,4 @@
+import json
 import logging
 from datetime import datetime
 
@@ -19,22 +20,38 @@ def _enviar_recordatorio(twilio_client, asignacion: dict, cuando: str):
     fecha_fmt = formatear_fecha(asignacion["fecha"])
     tipo_label = config.TIPO_LABEL[asignacion["tipo"]]
 
-    if cuando == "previo":
-        texto = (
-            f"Recordatorio: tienes asignada la parte '{asignacion['rol']}' "
-            f"en la {tipo_label} del {fecha_fmt}."
-        )
-    else:
-        texto = (
-            f"Hoy es tu parte: '{asignacion['rol']}' en la {tipo_label} "
-            f"({fecha_fmt}). ¡Nos vemos en la reunión!"
-        )
+    content_sid = (
+        config.CONTENT_SID_PREVIO if cuando == "previo" else config.CONTENT_SID_DIA
+    )
+    content_variables = json.dumps(
+        {"1": asignacion["rol"], "2": tipo_label, "3": fecha_fmt}
+    )
 
     destino = "whatsapp:" + asignacion["telefono"]
     try:
-        twilio_client.messages.create(
-            from_=config.TWILIO_WHATSAPP_FROM, to=destino, body=texto
-        )
+        if content_sid:
+            twilio_client.messages.create(
+                from_=config.TWILIO_WHATSAPP_FROM,
+                to=destino,
+                content_sid=content_sid,
+                content_variables=content_variables,
+            )
+        else:
+            # Sin plantilla configurada todavía: solo funciona si la
+            # persona escribió al bot en las últimas 24h (modo pruebas).
+            if cuando == "previo":
+                texto = (
+                    f"Recordatorio: tienes asignada la parte '{asignacion['rol']}' "
+                    f"en la {tipo_label} del {fecha_fmt}."
+                )
+            else:
+                texto = (
+                    f"Hoy es tu parte: '{asignacion['rol']}' en la {tipo_label} "
+                    f"({fecha_fmt}). ¡Nos vemos en la reunión!"
+                )
+            twilio_client.messages.create(
+                from_=config.TWILIO_WHATSAPP_FROM, to=destino, body=texto
+            )
     except TwilioRestException:
         logger.exception("Error enviando recordatorio a %s", asignacion["telefono"])
 

@@ -1,14 +1,13 @@
 import os
+import re
 import sqlite3
 from contextlib import contextmanager
-from datetime import date
 
 DB_PATH = os.environ.get("DB_PATH", "congregacion.db")
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS usuarios (
-    telegram_id INTEGER PRIMARY KEY,
-    username TEXT,
+    telefono TEXT PRIMARY KEY,
     nombre TEXT
 );
 
@@ -23,12 +22,21 @@ CREATE TABLE IF NOT EXISTS asignaciones (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     reunion_id INTEGER NOT NULL REFERENCES reuniones(id) ON DELETE CASCADE,
     rol TEXT NOT NULL,
-    username TEXT NOT NULL,
+    telefono TEXT NOT NULL,
     orden INTEGER NOT NULL DEFAULT 0,
     recordatorio_previo_enviado INTEGER NOT NULL DEFAULT 0,
     recordatorio_dia_enviado INTEGER NOT NULL DEFAULT 0
 );
 """
+
+
+def normalizar_telefono(telefono: str) -> str:
+    """Deja solo dígitos y el + inicial. Acepta 'whatsapp:+503...', '+503...', '503...'."""
+    telefono = telefono.replace("whatsapp:", "").strip()
+    digitos = re.sub(r"[^\d+]", "", telefono)
+    if not digitos.startswith("+"):
+        digitos = "+" + digitos
+    return digitos
 
 
 @contextmanager
@@ -48,22 +56,25 @@ def init_db():
         conn.executescript(SCHEMA)
 
 
-def registrar_usuario(telegram_id: int, username: str | None, nombre: str):
+def registrar_usuario(telefono: str, nombre: str | None = None):
+    telefono = normalizar_telefono(telefono)
     with get_conn() as conn:
+        row = conn.execute(
+            "SELECT nombre FROM usuarios WHERE telefono = ?", (telefono,)
+        ).fetchone()
+        nombre_final = nombre or (row["nombre"] if row else None)
         conn.execute(
-            """INSERT INTO usuarios (telegram_id, username, nombre)
-               VALUES (?, ?, ?)
-               ON CONFLICT(telegram_id) DO UPDATE SET
-                 username=excluded.username, nombre=excluded.nombre""",
-            (telegram_id, (username or "").lower() or None, nombre),
+            """INSERT INTO usuarios (telefono, nombre) VALUES (?, ?)
+               ON CONFLICT(telefono) DO UPDATE SET nombre=excluded.nombre""",
+            (telefono, nombre_final),
         )
 
 
-def buscar_usuario_por_username(username: str):
-    username = username.lstrip("@").lower()
+def buscar_usuario(telefono: str):
+    telefono = normalizar_telefono(telefono)
     with get_conn() as conn:
         row = conn.execute(
-            "SELECT * FROM usuarios WHERE username = ?", (username,)
+            "SELECT * FROM usuarios WHERE telefono = ?", (telefono,)
         ).fetchone()
         return dict(row) if row else None
 
@@ -85,13 +96,13 @@ def limpiar_asignaciones(reunion_id: int):
         conn.execute("DELETE FROM asignaciones WHERE reunion_id = ?", (reunion_id,))
 
 
-def agregar_asignacion(reunion_id: int, rol: str, username: str, orden: int = 0):
-    username = username.lstrip("@").lower()
+def agregar_asignacion(reunion_id: int, rol: str, telefono: str, orden: int = 0):
+    telefono = normalizar_telefono(telefono)
     with get_conn() as conn:
         conn.execute(
-            """INSERT INTO asignaciones (reunion_id, rol, username, orden)
+            """INSERT INTO asignaciones (reunion_id, rol, telefono, orden)
                VALUES (?, ?, ?, ?)""",
-            (reunion_id, rol, username, orden),
+            (reunion_id, rol, telefono, orden),
         )
 
 
@@ -103,23 +114,23 @@ def obtener_programa(fecha: str, tipo: str):
         if not row:
             return []
         asignaciones = conn.execute(
-            """SELECT rol, username FROM asignaciones
+            """SELECT rol, telefono FROM asignaciones
                WHERE reunion_id = ? ORDER BY orden, id""",
             (row["id"],),
         ).fetchall()
         return [dict(a) for a in asignaciones]
 
 
-def obtener_partes_de_usuario(username: str, desde_fecha: str):
-    username = username.lstrip("@").lower()
+def obtener_partes_de_usuario(telefono: str, desde_fecha: str):
+    telefono = normalizar_telefono(telefono)
     with get_conn() as conn:
         rows = conn.execute(
             """SELECT r.fecha, r.tipo, a.rol
                FROM asignaciones a
                JOIN reuniones r ON r.id = a.reunion_id
-               WHERE a.username = ? AND r.fecha >= ?
+               WHERE a.telefono = ? AND r.fecha >= ?
                ORDER BY r.fecha""",
-            (username, desde_fecha),
+            (telefono, desde_fecha),
         ).fetchall()
         return [dict(r) for r in rows]
 
@@ -132,7 +143,7 @@ def obtener_asignaciones_pendientes(fecha: str, tipo: str, campo_recordatorio: s
     )
     with get_conn() as conn:
         rows = conn.execute(
-            f"""SELECT a.id, a.rol, a.username, r.fecha, r.tipo
+            f"""SELECT a.id, a.rol, a.telefono, r.fecha, r.tipo
                 FROM asignaciones a
                 JOIN reuniones r ON r.id = a.reunion_id
                 WHERE r.fecha = ? AND r.tipo = ? AND a.{campo_recordatorio} = 0""",

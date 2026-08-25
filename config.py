@@ -5,13 +5,22 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-BOT_TOKEN = os.environ["BOT_TOKEN"]
+TWILIO_ACCOUNT_SID = os.environ["TWILIO_ACCOUNT_SID"]
+TWILIO_AUTH_TOKEN = os.environ["TWILIO_AUTH_TOKEN"]
 
-ADMIN_IDS = {
-    int(x) for x in os.environ.get("ADMIN_IDS", "").split(",") if x.strip()
+# Número de WhatsApp desde el que escribe el bot, con prefijo whatsapp:
+# Ej: whatsapp:+14155238886 (Sandbox) o whatsapp:+503XXXXXXXX (producción)
+TWILIO_WHATSAPP_FROM = os.environ["TWILIO_WHATSAPP_FROM"]
+if not TWILIO_WHATSAPP_FROM.startswith("whatsapp:"):
+    TWILIO_WHATSAPP_FROM = "whatsapp:" + TWILIO_WHATSAPP_FROM
+
+from db import normalizar_telefono  # noqa: E402
+
+ADMIN_PHONES = {
+    normalizar_telefono(x)
+    for x in os.environ.get("ADMIN_PHONES", "").split(",")
+    if x.strip()
 }
-
-GROUP_CHAT_ID = os.environ.get("GROUP_CHAT_ID") or None
 
 TIMEZONE = ZoneInfo(os.environ.get("TIMEZONE", "America/Santo_Domingo"))
 

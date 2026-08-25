@@ -1,8 +1,7 @@
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime
 
-from telegram.error import TelegramError
-from telegram.ext import ContextTypes
+from twilio.base.exceptions import TwilioRestException
 
 import config
 import db
@@ -16,8 +15,7 @@ REUNIONES = [
 ]
 
 
-async def _enviar_recordatorio(context: ContextTypes.DEFAULT_TYPE, asignacion: dict, cuando: str):
-    usuario = db.buscar_usuario_por_username(asignacion["username"])
+def _enviar_recordatorio(twilio_client, asignacion: dict, cuando: str):
     fecha_fmt = formatear_fecha(asignacion["fecha"])
     tipo_label = config.TIPO_LABEL[asignacion["tipo"]]
 
@@ -32,26 +30,20 @@ async def _enviar_recordatorio(context: ContextTypes.DEFAULT_TYPE, asignacion: d
             f"({fecha_fmt}). ¡Nos vemos en la reunión!"
         )
 
-    if not usuario:
-        logger.warning(
-            "No se pudo notificar a @%s (no ha hecho /start): %s",
-            asignacion["username"],
-            asignacion["rol"],
-        )
-        return
-
+    destino = "whatsapp:" + asignacion["telefono"]
     try:
-        await context.bot.send_message(chat_id=usuario["telegram_id"], text=texto)
-    except TelegramError:
-        logger.exception("Error enviando recordatorio a @%s", asignacion["username"])
+        twilio_client.messages.create(
+            from_=config.TWILIO_WHATSAPP_FROM, to=destino, body=texto
+        )
+    except TwilioRestException:
+        logger.exception("Error enviando recordatorio a %s", asignacion["telefono"])
 
 
-async def revisar_recordatorios(context: ContextTypes.DEFAULT_TYPE):
+def revisar_recordatorios(twilio_client):
     hoy = datetime.now(config.TIMEZONE).date()
 
     for tipo, dia_semana in REUNIONES:
         fecha_reunion = proxima_fecha_para(dia_semana, desde=hoy)
-
         dias_hasta = (fecha_reunion - hoy).days
 
         if dias_hasta == config.REMINDER_DAYS_BEFORE:
@@ -59,7 +51,7 @@ async def revisar_recordatorios(context: ContextTypes.DEFAULT_TYPE):
                 fecha_reunion.isoformat(), tipo, "recordatorio_previo_enviado"
             )
             for asignacion in pendientes:
-                await _enviar_recordatorio(context, asignacion, "previo")
+                _enviar_recordatorio(twilio_client, asignacion, "previo")
                 db.marcar_recordatorio_enviado(asignacion["id"], "recordatorio_previo_enviado")
 
         if dias_hasta == 0:
@@ -67,14 +59,5 @@ async def revisar_recordatorios(context: ContextTypes.DEFAULT_TYPE):
                 fecha_reunion.isoformat(), tipo, "recordatorio_dia_enviado"
             )
             for asignacion in pendientes:
-                await _enviar_recordatorio(context, asignacion, "dia")
+                _enviar_recordatorio(twilio_client, asignacion, "dia")
                 db.marcar_recordatorio_enviado(asignacion["id"], "recordatorio_dia_enviado")
-
-
-def programar_revision_diaria(application):
-    """Ejecuta la revisión de recordatorios todos los días a las 8:00 (hora local configurada)."""
-    application.job_queue.run_daily(
-        revisar_recordatorios,
-        time=datetime.strptime("08:00", "%H:%M").time().replace(tzinfo=config.TIMEZONE),
-        name="revision_diaria_recordatorios",
-    )

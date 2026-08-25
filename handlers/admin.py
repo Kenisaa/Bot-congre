@@ -1,33 +1,38 @@
 import re
 from datetime import date
 
-from telegram import Update
-from telegram.ext import ContextTypes
-
 import config
 import db
 from dates_util import formatear_fecha, proxima_fecha_para
-from handlers.common import es_admin
 
-LINEA_RE = re.compile(r"^\s*([^:]+):\s*@?(\w+)\s*$")
+LINEA_RE = re.compile(r"^\s*([^:]+):\s*([\d+][\d\s+()-]{6,})\s*$")
 
 AYUDA_CARGA = (
-    "Uso:\n"
-    "/cargar_semana [YYYY-MM-DD]\n"
-    "/cargar_finde [YYYY-MM-DD]\n\n"
-    "Luego, en la(s) línea(s) siguiente(s) del mismo mensaje, pon una asignación "
-    "por línea con el formato:\n"
-    "Rol: @usuario\n\n"
-    "Ejemplo:\n"
-    "/cargar_semana\n"
-    "Presidente: @juanperez\n"
-    "Oración inicial: @carlosgomez\n"
-    "Tesoros de la Biblia: @juanperez\n"
-    "Perlas escondidas: @pedroramirez\n"
-    "Estudio bíblico de la congregación (conductor): @juanperez\n"
-    "Estudio bíblico de la congregación (lector): @miguelrosa\n"
-    "Oración final: @miguelrosa\n\n"
-    "Si no pones fecha, se usa la próxima reunión de ese tipo según la configuración."
+    "Para cargar el programa, envía un mensaje así (todo junto, cada línea "
+    "con Shift+Enter):\n\n"
+    "cargar semana\n"
+    "Presidente: +50370001111\n"
+    "Oración inicial: +50370002222\n"
+    "Tesoros de la Biblia: +50370001111\n"
+    "Perlas escondidas: +50370003333\n"
+    "Estudio bíblico (conductor): +50370001111\n"
+    "Estudio bíblico (lector): +50370004444\n"
+    "Oración final: +50370004444\n\n"
+    "O para el fin de semana:\n\n"
+    "cargar finde\n"
+    "Presidente: +50370001111\n"
+    "Discurso público: +50370003333\n"
+    "Lector de Atalaya: +50370004444\n"
+    "Micrófono 1: +50370005555\n"
+    "Micrófono 2: +50370006666\n"
+    "Sonido: +50370007777\n"
+    "Plataforma: +50370008888\n"
+    "Oración inicial: +50370002222\n"
+    "Oración final: +50370001111\n\n"
+    "Usa el número completo con código de país (ej. +503 para El Salvador).\n"
+    "Si no pones fecha después de 'cargar semana'/'cargar finde', se usa la "
+    "próxima reunión de ese tipo. Para una fecha específica:\n"
+    "cargar semana 2026-09-03"
 )
 
 
@@ -41,71 +46,53 @@ def _parse_asignaciones(texto_lineas: list[str]):
         if not m:
             errores.append(f"Línea {i} no entendida: '{linea}'")
             continue
-        rol, username = m.group(1).strip(), m.group(2).strip()
-        asignaciones.append((rol, username))
+        rol, telefono = m.group(1).strip(), m.group(2).strip()
+        asignaciones.append((rol, telefono))
     return asignaciones, errores
 
 
-async def _cargar(update: Update, context: ContextTypes.DEFAULT_TYPE, tipo: str, dia_default: int):
-    user = update.effective_user
-    if not es_admin(user.id):
-        await update.message.reply_text("Solo un administrador puede cargar el programa.")
-        return
-
-    lineas = update.message.text.split("\n")
+def _cargar(texto: str, tipo: str, dia_default: int) -> str:
+    lineas = texto.split("\n")
     primera = lineas[0]
     resto = lineas[1:]
 
     partes_comando = primera.split()
-    fecha_str = None
-    if len(partes_comando) > 1:
-        fecha_str = partes_comando[1]
+    fecha_str = partes_comando[2] if len(partes_comando) > 2 else None
 
     if fecha_str:
         try:
             fecha = date.fromisoformat(fecha_str)
         except ValueError:
-            await update.message.reply_text(
-                "Fecha inválida, usa el formato YYYY-MM-DD.\n\n" + AYUDA_CARGA
-            )
-            return
+            return "Fecha inválida, usa el formato YYYY-MM-DD.\n\n" + AYUDA_CARGA
     else:
         fecha = proxima_fecha_para(dia_default)
 
     asignaciones, errores = _parse_asignaciones(resto)
 
     if not asignaciones:
-        await update.message.reply_text(
-            "No encontré asignaciones para cargar.\n\n" + AYUDA_CARGA
-        )
-        return
+        return "No encontré asignaciones para cargar.\n\n" + AYUDA_CARGA
 
     reunion_id = db.crear_o_obtener_reunion(fecha.isoformat(), tipo)
     db.limpiar_asignaciones(reunion_id)
-    for orden, (rol, username) in enumerate(asignaciones):
-        db.agregar_asignacion(reunion_id, rol, username, orden)
+    for orden, (rol, telefono) in enumerate(asignaciones):
+        db.agregar_asignacion(reunion_id, rol, telefono, orden)
+        db.registrar_usuario(telefono)
 
-    resumen = "\n".join(f"• {rol}: @{u}" for rol, u in asignaciones)
+    resumen = "\n".join(
+        f"• {rol}: {db.normalizar_telefono(tel)}" for rol, tel in asignaciones
+    )
     mensaje = (
         f"Programa cargado para {config.TIPO_LABEL[tipo]} "
         f"del {formatear_fecha(fecha.isoformat())}:\n\n{resumen}"
     )
     if errores:
         mensaje += "\n\nAtención, hubo líneas ignoradas:\n" + "\n".join(errores)
-    await update.message.reply_text(mensaje)
+    return mensaje
 
 
-async def cargar_semana(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await _cargar(update, context, "entre_semana", config.MIDWEEK_DAY)
+def cargar_semana(texto: str) -> str:
+    return _cargar(texto, "entre_semana", config.MIDWEEK_DAY)
 
 
-async def cargar_finde(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await _cargar(update, context, "fin_de_semana", config.WEEKEND_DAY)
-
-
-async def ayuda_admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user = update.effective_user
-    if not es_admin(user.id):
-        await update.message.reply_text("Solo un administrador puede ver esto.")
-        return
-    await update.message.reply_text(AYUDA_CARGA)
+def cargar_finde(texto: str) -> str:
+    return _cargar(texto, "fin_de_semana", config.WEEKEND_DAY)
